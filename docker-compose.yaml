@@ -191,6 +191,24 @@ services:
     networks:
       - bigdata-net
 
+  # ======================
+  # MONGO EXPRESS (MONGO UI)
+  # ======================
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: mongo-express
+    depends_on:
+      - mongodb
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    ports:
+      - "8083:8081"
+    networks:
+      - bigdata-net
+
 # ======================
 # VOLUMES
 # ======================
