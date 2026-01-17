@@ -153,6 +153,10 @@ services:
       - airflow_logs:/opt/airflow/logs
       - ./kafka_utils:/opt/airflow/kafka_utils
       - ./airflow/requirements.txt:/requirements.txt
+      - ./spark_jobs:/opt/project/spark_jobs
+      - /var/run/docker.sock:/var/run/docker.sock
+
+
 
     ports:
       - "8082:8080"
@@ -183,6 +187,10 @@ services:
       - ./kafka_utils:/opt/airflow/kafka_utils
       - airflow_logs:/opt/airflow/logs
       - ./airflow/requirements.txt:/requirements.txt
+      - ./spark_jobs:/opt/project/spark_jobs
+      - /var/run/docker.sock:/var/run/docker.sock
+
+
     command: >
       bash -c "
       pip install --no-cache-dir -r /requirements.txt &&

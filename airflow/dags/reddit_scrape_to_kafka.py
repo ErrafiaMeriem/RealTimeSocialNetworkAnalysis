@@ -46,6 +46,5 @@ with DAG(
 
     scrape_task = PythonOperator(
         task_id="scrape_reddit_and_send_to_kafka",
-        python_callable=scrape_and_stream,
-        dag=dag
+        python_callable=scrape_and_stream
     )
