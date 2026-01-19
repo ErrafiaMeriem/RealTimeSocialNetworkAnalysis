@@ -15,7 +15,7 @@ default_args = {
 with DAG(
     dag_id="reddit_spark_pipeline",
     start_date=days_ago(1),
-    schedule=[reddit_kafka_dataset],   # data-driven trigger stays
+    schedule=[reddit_kafka_dataset],  
     catchup=False,
     default_args=default_args,
     tags=["spark", "standalone"],
@@ -28,4 +28,3 @@ with DAG(
         conn_id="spark_standalone",
         verbose=True,
     )
-

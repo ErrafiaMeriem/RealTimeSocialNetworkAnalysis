@@ -1,10 +1,21 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, from_json, lower, regexp_replace,
-    trim, split, concat_ws
+    col,
+    from_json,
+    lower,
+    regexp_replace,
+    trim,
+    sha2,
+    udf
 )
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from pyspark.ml.feature import StopWordsRemover
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType
+)
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 
 
 # =========================
@@ -27,6 +38,7 @@ comment_schema = StructType([
     StructField("body", StringType(), True),
     StructField("score", IntegerType(), True),
     StructField("created_at", StringType(), True),
+    StructField("author", StringType(), True),
 ])
 
 
@@ -35,40 +47,34 @@ comment_schema = StructType([
 # =========================
 spark = (
     SparkSession.builder
-    .appName("RedditCommentsFromKafka")
+    .appName("RedditCommentsKafkaBatch")
     .config("spark.mongodb.write.connection.uri", MONGO_URI)
     .getOrCreate()
 )
 
-print("=" * 50)
-print("Starting Kafka read...")
-print("=" * 50)
+spark.sparkContext.setLogLevel("WARN")
+
+print("=" * 60)
+print("Starting Kafka batch read")
+print("=" * 60)
+
 
 # =========================
-# READ FROM KAFKA (BATCH - FIXED)
+# READ FROM KAFKA (BATCH)
 # =========================
-try:
-    raw_df = (
-        spark.read
-        .format("kafka")
-        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
-        .option("subscribe", KAFKA_TOPIC)
-        .option("startingOffsets", "earliest")  # CHANGED: Read all available messages
-        .load()
-    )
-    
-    print(f"Read {raw_df.count()} messages from Kafka")
-    
-    # Check if we have data
-    if raw_df.count() == 0:
-        print("WARNING: No messages found in Kafka topic. Exiting.")
-        spark.stop()
-        exit(0)
-    
-except Exception as e:
-    print(f"ERROR reading from Kafka: {str(e)}")
+raw_df = (
+    spark.read
+    .format("kafka")
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+    .option("subscribe", KAFKA_TOPIC)
+    .option("startingOffsets", "earliest")
+    .load()
+)
+
+if raw_df.count() == 0:
+    print("No messages in Kafka topic. Exiting safely.")
     spark.stop()
-    raise
+    exit(0)
 
 
 # =========================
@@ -79,90 +85,123 @@ df = (
     .selectExpr("CAST(value AS STRING) AS json_str")
     .select(from_json(col("json_str"), comment_schema).alias("data"))
     .select("data.*")
+    .filter(col("comment_id").isNotNull())
 )
 
-# Filter out null/malformed records
-df = df.filter(col("comment_id").isNotNull())
-print(f"Parsed {df.count()} valid records")
+if df.count() == 0:
+    print("No valid JSON records after parsing. Exiting.")
+    spark.stop()
+    exit(0)
 
 
 # =========================
-# TRANSFORMATIONS
+# BASIC CLEANING (NO STOPWORDS)
 # =========================
-
-# rename body → comment_body
 df = df.withColumnRenamed("body", "comment_body")
 
-# Filter out null bodies first
-df = df.filter(col("comment_body").isNotNull())
+df = (
+    df
+    .filter(col("comment_body").isNotNull())
+    .withColumn("comment_body", lower(col("comment_body")))
+    .withColumn("comment_body", trim(col("comment_body")))
+)
 
-# lowercase
-df = df.withColumn("comment_body", lower(col("comment_body")))
-
-# remove u/username
+# Remove Reddit usernames safely
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"u/\w+", "")
 )
 
-# remove warning comments
-df = df.filter(~col("comment_body").startswith("warning"))
-
-# trim
-df = df.withColumn("comment_body", trim(col("comment_body")))
-
-# remove duplicates
-df = df.dropDuplicates(["comment_body"])
-
-# tokenize
-df = df.withColumn("tokens", split(col("comment_body"), "\\s+"))
-
-# stopwords
-remover = StopWordsRemover(
-    inputCol="tokens",
-    outputCol="clean_tokens"
+# Remove literal square brackets safely
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"[\[\]]", "")
 )
-df = remover.transform(df)
 
-# rebuild text
+# Filter bot / deleted / warning comments
+df = df.filter(
+    ~col("comment_body").rlike(r"^(deleted|removed|warning)")
+)
+
+if df.count() == 0:
+    print("All comments filtered out (bots / deleted / warnings). Exiting.")
+    spark.stop()
+    exit(0)
+
+
+# =========================
+# CLEAN COMMENT (KEEP STOPWORDS)
+# =========================
 df = df.withColumn(
     "clean_comment",
-    concat_ws(" ", col("clean_tokens"))
+    col("comment_body")
 )
 
-# drop empty
 df = df.filter(col("clean_comment") != "")
 
-print(f"After transformations: {df.count()} records")
+
+# =========================
+# LANGUAGE FILTER (SAFE)
+# =========================
+def detect_lang_safe(text):
+    try:
+        return detect(text)
+    except LangDetectException:
+        return None
+
+detect_lang_udf = udf(detect_lang_safe, StringType())
+
+df = df.withColumn(
+    "language",
+    detect_lang_udf(col("clean_comment"))
+)
+
+df = df.filter(col("language") == "en")
+
+if df.count() == 0:
+    print("No English comments after language filtering. Exiting.")
+    spark.stop()
+    exit(0)
+
+
+# =========================
+# DEDUPLICATION (CONTENT-BASED)
+# =========================
+df = df.withColumn(
+    "comment_hash",
+    sha2(col("clean_comment"), 256)
+)
+
+df = df.dropDuplicates(["comment_hash"])
+
+
+# =========================
+# FINAL SELECTION
+# =========================
+final_df = df.select(
+    "comment_id",
+    "post_id",
+    "clean_comment",
+    "comment_hash",
+    "score",
+    "created_at"
+)
+
+print(f"Final number of records to write: {final_df.count()}")
 
 
 # =========================
 # WRITE TO MONGODB
 # =========================
-try:
-    final_df = df.select(
-        "comment_id",
-        "post_id",
-        "clean_comment",
-        "score",
-        "created_at"
-    )
-    
-    print("Writing to MongoDB...")
-    (
-        final_df.write
-        .format("mongodb")
-        .mode("append")
-        .option("database", MONGO_DB)
-        .option("collection", MONGO_COLLECTION)
-        .save()
-    )
-    print(f"Successfully wrote {final_df.count()} records to MongoDB")
-    
-except Exception as e:
-    print(f"ERROR writing to MongoDB: {str(e)}")
-    spark.stop()
-    raise
+(
+    final_df.write
+    .format("mongodb")
+    .mode("append")
+    .option("database", MONGO_DB)
+    .option("collection", MONGO_COLLECTION)
+    .save()
+)
 
-print("Job completed successfully!")
+print("Write to MongoDB completed successfully.")
 spark.stop()
+print("Job completed successfully.")

@@ -3,7 +3,7 @@ FROM apache/spark:3.5.3
 USER root
 
 # Python dependencies needed by PySpark ML
-RUN pip3 install --no-cache-dir numpy
+RUN pip3 install --no-cache-dir numpy langdetect
 
 # Add Kafka + Mongo connectors
 COPY spark-jars/*.jar /opt/spark/jars/
