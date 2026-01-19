@@ -125,31 +125,66 @@ df = df.withColumn(
     )
 )
 
-# 3️⃣ Remove markdown / Reddit formatting (*, **, __, ``` etc.)
+# 3️⃣ **NEW: Remove ALL escaped quotes (\", \') - converts to regular quotes first**
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r'\\"', '"')
+)
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"\\'", "'")
+)
+
+# 4️⃣ **NEW: Remove ALL double quotes (since they're typically formatting, not content)**
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r'"', '')
+)
+
+# 5️⃣ **NEW: Clean up multiple apostrophes or backticks**
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"('{2,}|`{2,})", "")
+)
+
+# 5️⃣ **NEW: Clean up multiple apostrophes or backticks**
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"('{2,}|`{2,})", "")
+)
+
+# 6️⃣ Remove markdown / Reddit formatting (*, **, __, ``` etc.)
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"[*_`]+", "")
 )
 
-# 4️⃣ Remove Reddit usernames (u/username)
+# 7️⃣ Remove Reddit usernames (u/username)
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"u/\w+", "")
 )
 
-# 5️⃣ Remove hashtags but keep words (#palestine → palestine)
+# 8️⃣ Remove hashtags but keep words (#palestine → palestine)
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"#(\w+)", r"\1")
 )
 
-# 6️⃣ Remove literal square brackets safely
+# 9️⃣ Remove literal square brackets safely
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"[\[\]]", "")
 )
 
-# 7️⃣ Normalize whitespace
+# 9️⃣ **NEW: Clean up contractions with escaped quotes (couldn\'t → couldn t → couldn't)**
+# First convert escaped apostrophes to normal ones
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"\\\'", "'")
+)
+
+# 🔟 Normalize whitespace (MUST be done AFTER quote removal)
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"\s+", " ")
