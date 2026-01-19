@@ -19,7 +19,7 @@ MONGO_COLLECTION = "comments_clean"
 
 
 # =========================
-# SCHEMA (IMPORTANT)
+# SCHEMA
 # =========================
 comment_schema = StructType([
     StructField("comment_id", StringType(), True),
@@ -40,26 +40,50 @@ spark = (
     .getOrCreate()
 )
 
+print("=" * 50)
+print("Starting Kafka read...")
+print("=" * 50)
 
 # =========================
-# READ FROM KAFKA (BATCH)
+# READ FROM KAFKA (BATCH - FIXED)
 # =========================
-raw_df = (
-    spark.read
-    .format("kafka")
-    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
-    .option("subscribe", KAFKA_TOPIC)
-    .option("startingOffsets", "earliest")
-    .load()
-)
+try:
+    raw_df = (
+        spark.read
+        .format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+        .option("subscribe", KAFKA_TOPIC)
+        .option("startingOffsets", "earliest")  # CHANGED: Read all available messages
+        .load()
+    )
+    
+    print(f"Read {raw_df.count()} messages from Kafka")
+    
+    # Check if we have data
+    if raw_df.count() == 0:
+        print("WARNING: No messages found in Kafka topic. Exiting.")
+        spark.stop()
+        exit(0)
+    
+except Exception as e:
+    print(f"ERROR reading from Kafka: {str(e)}")
+    spark.stop()
+    raise
 
-# value is binary → string → JSON
+
+# =========================
+# PARSE JSON
+# =========================
 df = (
     raw_df
     .selectExpr("CAST(value AS STRING) AS json_str")
     .select(from_json(col("json_str"), comment_schema).alias("data"))
     .select("data.*")
 )
+
+# Filter out null/malformed records
+df = df.filter(col("comment_id").isNotNull())
+print(f"Parsed {df.count()} valid records")
 
 
 # =========================
@@ -68,6 +92,9 @@ df = (
 
 # rename body → comment_body
 df = df.withColumnRenamed("body", "comment_body")
+
+# Filter out null bodies first
+df = df.filter(col("comment_body").isNotNull())
 
 # lowercase
 df = df.withColumn("comment_body", lower(col("comment_body")))
@@ -106,24 +133,36 @@ df = df.withColumn(
 # drop empty
 df = df.filter(col("clean_comment") != "")
 
+print(f"After transformations: {df.count()} records")
+
 
 # =========================
 # WRITE TO MONGODB
 # =========================
-(
-    df.select(
+try:
+    final_df = df.select(
         "comment_id",
         "post_id",
         "clean_comment",
         "score",
         "created_at"
     )
-    .write
-    .format("mongodb")
-    .mode("append")
-    .option("database", MONGO_DB)
-    .option("collection", MONGO_COLLECTION)
-    .save()
-)
+    
+    print("Writing to MongoDB...")
+    (
+        final_df.write
+        .format("mongodb")
+        .mode("append")
+        .option("database", MONGO_DB)
+        .option("collection", MONGO_COLLECTION)
+        .save()
+    )
+    print(f"Successfully wrote {final_df.count()} records to MongoDB")
+    
+except Exception as e:
+    print(f"ERROR writing to MongoDB: {str(e)}")
+    spark.stop()
+    raise
 
+print("Job completed successfully!")
 spark.stop()

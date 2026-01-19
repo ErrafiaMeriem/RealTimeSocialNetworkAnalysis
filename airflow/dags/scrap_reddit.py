@@ -30,7 +30,7 @@ REVISIT_WINDOW_SECONDS = 2 * 60 * 60
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-CHECKPOINT_FILE = os.path.join(DATA_DIR, "last_checkpoint.json")
+CHECKPOINT_FILE = "/opt/airflow/data/last_checkpoint.json"
 POSTS_FILE = os.path.join(DATA_DIR, "posts.json")
 COMMENTS_FILE = os.path.join(DATA_DIR, "comments.json")
 

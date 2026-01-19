@@ -1,8 +1,5 @@
 services:
 
-  # ======================
-  # ZOOKEEPER
-  # ======================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
@@ -14,9 +11,7 @@ services:
     networks:
       - bigdata-net
 
-  # ======================
-  # KAFKA
-  # ======================
+
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
@@ -34,9 +29,7 @@ services:
     networks:
       - bigdata-net
 
-  # ======================
-  # KAFDROP (KAFKA UI)
-  # ======================
+
   kafdrop:
     image: obsidiandynamics/kafdrop:4.0.1
     container_name: kafdrop
@@ -52,9 +45,6 @@ services:
       - bigdata-net
 
 
-  # ======================
-  # MONGODB
-  # ======================
   mongodb:
     image: mongo:7
     container_name: mongodb
@@ -66,35 +56,34 @@ services:
       - bigdata-net
 
   spark-master:
-    image: apache/spark:3.5.3
     container_name: spark-master
-    command: >
-      bash -c "/opt/spark/bin/spark-class
-      org.apache.spark.deploy.master.Master"
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: spark-custom:3.5.3
+    volumes:
+      - ./spark_jobs:/opt/spark_jobs
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
-      - "7077:7077"
       - "8080:8080"
+      - "7077:7077"
     networks:
       - bigdata-net
 
   spark-worker:
-    image: apache/spark:3.5.3
     container_name: spark-worker
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: spark-custom:3.5.3
+    volumes:
+      - ./spark_jobs:/opt/spark_jobs
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
-    command: >
-      bash -c "/opt/spark/bin/spark-class
-      org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077"
-    ports:
-      - "8081:8081"
     networks:
       - bigdata-net
 
-
-  # ======================
-  # POSTGRES (AIRFLOW DB)
-  # ======================
   postgres:
     image: postgres:15
     container_name: airflow-postgres
@@ -107,11 +96,10 @@ services:
     networks:
       - bigdata-net
 
-  # ======================
-  # AIRFLOW INIT (ONE-SHOT)
-  # ======================
   airflow-init:
-    image: apache/airflow:2.8.1
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow-init
     depends_on:
       - postgres
@@ -134,11 +122,10 @@ services:
     networks:
       - bigdata-net
 
-  # ======================
-  # AIRFLOW WEBSERVER
-  # ======================
   airflow-webserver:
-    image: apache/airflow:2.8.1
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow-webserver
     depends_on:
       - airflow-init
@@ -147,32 +134,24 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       PYTHONPATH: /opt/airflow
+    
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./data:/opt/airflow/data
       - airflow_logs:/opt/airflow/logs
       - ./kafka_utils:/opt/airflow/kafka_utils
-      - ./airflow/requirements.txt:/requirements.txt
-      - ./spark_jobs:/opt/project/spark_jobs
-      - /var/run/docker.sock:/var/run/docker.sock
-
-
+      - ./spark_jobs:/opt/spark_jobs
+      - ./data:/opt/airflow/data
 
     ports:
       - "8082:8080"
-    command: >
-      bash -c "
-      pip install --no-cache-dir -r /requirements.txt &&
-      airflow webserver
-      "
+    command: airflow webserver
     networks:
       - bigdata-net
 
-  # ======================
-  # AIRFLOW SCHEDULER
-  # ======================
   airflow-scheduler:
-    image: apache/airflow:2.8.1
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow-scheduler
     depends_on:
       - airflow-webserver
@@ -180,28 +159,17 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       PYTHONPATH: /opt/airflow
-
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./data:/opt/airflow/data
       - ./kafka_utils:/opt/airflow/kafka_utils
       - airflow_logs:/opt/airflow/logs
-      - ./airflow/requirements.txt:/requirements.txt
-      - ./spark_jobs:/opt/project/spark_jobs
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./spark_jobs:/opt/spark_jobs
+      - ./data:/opt/airflow/data
 
-
-    command: >
-      bash -c "
-      pip install --no-cache-dir -r /requirements.txt &&
-      airflow scheduler
-      "
+    command: airflow scheduler
     networks:
       - bigdata-net
-
-  # ======================
-  # MONGO EXPRESS (MONGO UI)
-  # ======================
+      
   mongo-express:
     image: mongo-express:1.0.2
     container_name: mongo-express
@@ -217,17 +185,13 @@ services:
     networks:
       - bigdata-net
 
-# ======================
-# VOLUMES
-# ======================
 volumes:
   mongo_data:
   postgres_data:
   airflow_logs:
+  spark-bin:
+    external: false
 
-# ======================
-# NETWORK
-# ======================
 networks:
   bigdata-net:
     driver: bridge

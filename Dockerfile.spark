@@ -1,0 +1,11 @@
+FROM apache/spark:3.5.3
+
+USER root
+
+# Python dependencies needed by PySpark ML
+RUN pip3 install --no-cache-dir numpy
+
+# Add Kafka + Mongo connectors
+COPY spark-jars/*.jar /opt/spark/jars/
+
+USER spark
