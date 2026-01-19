@@ -85,16 +85,21 @@ services:
       - bigdata-net
 
   postgres:
-    image: postgres:15
-    container_name: airflow-postgres
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - bigdata-net
+      image: postgres:15
+      container_name: airflow-postgres
+      environment:
+        POSTGRES_USER: airflow
+        POSTGRES_PASSWORD: airflow
+        POSTGRES_DB: airflow
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      networks:
+        - bigdata-net
+      healthcheck:
+        test: ["CMD", "pg_isready", "-U", "airflow"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
 
   airflow-init:
     build:
@@ -102,7 +107,8 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-init
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy  # Wait for postgres to be ready
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -111,16 +117,11 @@ services:
     command: >
       bash -c "
       airflow db init &&
-      airflow users create
-        --username admin
-        --password admin
-        --firstname Admin
-        --lastname User
-        --role Admin
-        --email admin@example.com
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true
       "
     networks:
       - bigdata-net
+    restart: "no"  # Don't restart - run once only
 
   airflow-webserver:
     build:
@@ -128,25 +129,31 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-webserver
     depends_on:
-      - airflow-init
+      airflow-init:
+        condition: service_completed_successfully  # Wait for init to finish
+      postgres:
+        condition: service_healthy
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       PYTHONPATH: /opt/airflow
-    
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs
       - ./kafka_utils:/opt/airflow/kafka_utils
       - ./spark_jobs:/opt/spark_jobs
       - ./data:/opt/airflow/data
-
     ports:
       - "8082:8080"
     command: airflow webserver
     networks:
       - bigdata-net
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   airflow-scheduler:
     build:
@@ -154,7 +161,10 @@ services:
       dockerfile: Dockerfile.airflow
     container_name: airflow-scheduler
     depends_on:
-      - airflow-webserver
+      airflow-init:
+        condition: service_completed_successfully  # Wait for init to finish
+      postgres:
+        condition: service_healthy
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -165,11 +175,10 @@ services:
       - airflow_logs:/opt/airflow/logs
       - ./spark_jobs:/opt/spark_jobs
       - ./data:/opt/airflow/data
-
     command: airflow scheduler
     networks:
       - bigdata-net
-      
+
   mongo-express:
     image: mongo-express:1.0.2
     container_name: mongo-express

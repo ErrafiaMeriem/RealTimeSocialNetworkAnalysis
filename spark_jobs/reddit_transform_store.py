@@ -3,8 +3,8 @@ from pyspark.sql.functions import (
     col,
     from_json,
     lower,
-    regexp_replace,
     trim,
+    regexp_replace,
     sha2,
     udf
 )
@@ -55,7 +55,7 @@ spark = (
 spark.sparkContext.setLogLevel("WARN")
 
 print("=" * 60)
-print("Starting Kafka batch read")
+print("Starting Kafka batch processing")
 print("=" * 60)
 
 
@@ -95,7 +95,7 @@ if df.count() == 0:
 
 
 # =========================
-# BASIC CLEANING (NO STOPWORDS)
+# ADVANCED TEXT CLEANING
 # =========================
 df = df.withColumnRenamed("body", "comment_body")
 
@@ -103,40 +103,87 @@ df = (
     df
     .filter(col("comment_body").isNotNull())
     .withColumn("comment_body", lower(col("comment_body")))
-    .withColumn("comment_body", trim(col("comment_body")))
 )
 
-# Remove Reddit usernames safely
+# 1️⃣ Normalize URLs → <URL>
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(
+        col("comment_body"),
+        r"(https?://\S+|www\.\S+)",
+        "<url>"
+    )
+)
+
+# 2️⃣ Remove escaped newlines, tabs, slashes from scraping
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(
+        col("comment_body"),
+        r"(\\n|\\r|\\t|\\|\/)",
+        " "
+    )
+)
+
+# 3️⃣ Remove markdown / Reddit formatting (*, **, __, ``` etc.)
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"[*_`]+", "")
+)
+
+# 4️⃣ Remove Reddit usernames (u/username)
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"u/\w+", "")
 )
 
-# Remove literal square brackets safely
+# 5️⃣ Remove hashtags but keep words (#palestine → palestine)
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"#(\w+)", r"\1")
+)
+
+# 6️⃣ Remove literal square brackets safely
 df = df.withColumn(
     "comment_body",
     regexp_replace(col("comment_body"), r"[\[\]]", "")
 )
 
-# Filter bot / deleted / warning comments
+# 7️⃣ Normalize whitespace
+df = df.withColumn(
+    "comment_body",
+    regexp_replace(col("comment_body"), r"\s+", " ")
+)
+
+df = df.withColumn("comment_body", trim(col("comment_body")))
+
+
+# =========================
+# FILTER BOT / WARNING / SPAM COMMENTS
+# =========================
 df = df.filter(
-    ~col("comment_body").rlike(r"^(deleted|removed|warning)")
+    ~col("comment_body").rlike(
+        r"^(warning|help|n|bot|moderator|auto|this is an automated message)"
+    )
+)
+
+# Donation / fundraising boilerplate
+df = df.filter(
+    ~col("comment_body").rlike(
+        r"(donate|donation|fundraiser|give now|help palestinians in need|your donation delivers)"
+    )
 )
 
 if df.count() == 0:
-    print("All comments filtered out (bots / deleted / warnings). Exiting.")
+    print("All comments filtered out as noise/spam. Exiting.")
     spark.stop()
     exit(0)
 
 
 # =========================
-# CLEAN COMMENT (KEEP STOPWORDS)
+# CLEAN COMMENT (NO STOP WORD REMOVAL)
 # =========================
-df = df.withColumn(
-    "clean_comment",
-    col("comment_body")
-)
-
+df = df.withColumn("clean_comment", col("comment_body"))
 df = df.filter(col("clean_comment") != "")
 
 
@@ -151,11 +198,7 @@ def detect_lang_safe(text):
 
 detect_lang_udf = udf(detect_lang_safe, StringType())
 
-df = df.withColumn(
-    "language",
-    detect_lang_udf(col("clean_comment"))
-)
-
+df = df.withColumn("language", detect_lang_udf(col("clean_comment")))
 df = df.filter(col("language") == "en")
 
 if df.count() == 0:
