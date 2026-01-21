@@ -4,7 +4,7 @@ from airflow.utils.dates import days_ago
 from airflow.datasets import Dataset
 from datetime import timedelta
 
-reddit_kafka_dataset = Dataset("kafka://reddit/comments")
+reddit_posts_dataset = Dataset("kafka://reddit/posts")
 
 default_args = {
     "owner": "airflow",
@@ -13,9 +13,9 @@ default_args = {
 }
 
 with DAG(
-    dag_id="reddit_spark_pipeline",
+    dag_id="reddit_spark_posts_pipeline",
     start_date=days_ago(1),
-    schedule=[reddit_kafka_dataset],  
+    schedule=[reddit_posts_dataset],  
     catchup=False,
     default_args=default_args,
     tags=["spark", "standalone"],
@@ -23,7 +23,7 @@ with DAG(
 
     spark_transform_store = SparkSubmitOperator(
         task_id="spark_transform_store",
-        application="/opt/spark_jobs/reddit_transform_store.py",
+        application="/opt/spark_jobs/reddit_transform_posts.py",
         spark_binary="/opt/spark/bin/spark-submit",
         conn_id="spark_standalone",
         verbose=True,
