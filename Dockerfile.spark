@@ -2,26 +2,10 @@ FROM apache/spark:3.5.3
 
 USER root
 
-# =========================
-# Python deps for Pandas UDFs + Sentiment
-# =========================
-RUN pip3 install --no-cache-dir \
-    numpy \
-    pandas \
-    pyarrow \
-    vaderSentiment \
-    textblob \
-    langdetect \
-    spark-nlp==5.1.3
+# Python dependencies needed by PySpark ML
+RUN pip3 install --no-cache-dir numpy langdetect
 
-# =========================
-# Spark JARs (Kafka, Mongo, Spark NLP, etc.)
-# =========================
+# Add Kafka + Mongo connectors
 COPY spark-jars/*.jar /opt/spark/jars/
-
-# =========================
-# (Optional) Spark NLP offline models
-# =========================
-COPY spark-nlp-models/ /opt/spark-nlp-models/
 
 USER spark

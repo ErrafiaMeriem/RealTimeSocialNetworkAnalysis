@@ -139,14 +139,13 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       PYTHONPATH: /opt/airflow
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs
       - ./kafka_utils:/opt/airflow/kafka_utils
       - ./spark_jobs:/opt/spark_jobs
       - ./data:/opt/airflow/data
     ports:
-      - "8085:8080"
+      - "8082:8080"
     command: airflow webserver
     networks:
       - bigdata-net
@@ -171,7 +170,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       PYTHONPATH: /opt/airflow
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./airflow/dags:/opt/airflow/dags
       - ./kafka_utils:/opt/airflow/kafka_utils
       - airflow_logs:/opt/airflow/logs
