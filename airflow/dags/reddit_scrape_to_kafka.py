@@ -7,16 +7,27 @@ from datetime import timedelta
 from scrap_reddit import scrape
 from kafka_utils.producer import send_posts, send_comments
 
-reddit_kafka_dataset = Dataset("kafka://reddit/comments")
 
-def scrape_and_stream():
+comments_dataset = Dataset("kafka://reddit/comments")
+posts_dataset = Dataset("kafka://reddit/posts")
+
+
+def scrape_and_stream(**context):
     posts, comments = scrape()
+
+    emitted = []
 
     if posts:
         send_posts(posts)
+        emitted.append(posts_dataset)
 
     if comments:
         send_comments(comments)
+        emitted.append(comments_dataset)
+
+    # This is the key: return datasets dynamically
+    return emitted
+
 
 default_args = {
     "owner": "airflow",
@@ -36,5 +47,5 @@ with DAG(
     scrape_task = PythonOperator(
         task_id="scrape_reddit_and_send_to_kafka",
         python_callable=scrape_and_stream,
-        outlets=[reddit_kafka_dataset],   # 🔴 THIS IS THE KEY
+        outlets=[comments_dataset, posts_dataset],  # declared
     )
